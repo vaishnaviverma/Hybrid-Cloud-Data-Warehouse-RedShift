@@ -1,0 +1,161 @@
+# CloudFormation template for CSED516 — Amazon Redshift
+# Teardown: Delete this stack when finished to avoid charges.
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  CSED516 WK08 - Multi-node Amazon Redshift cluster for lab use (EXPERIMENT).
+  Private access (no public inbound). Cluster has IAM role attachment (LabRole)
+  for S3 COPY/UNLOAD.
+
+Parameters:
+  ClusterIdentifier:
+    Type: String
+    Default: wk08-redshift-cluster
+    AllowedPattern: '^[a-z][a-z0-9-]{1,62}$'
+    Description: Redshift cluster identifier (lowercase letters, numbers, hyphens; must start with a letter)
+  DatabaseName:
+    Type: String
+    Default: dev
+    AllowedPattern: '^[a-zA-Z][a-zA-Z0-9_]{0,61}$'
+    Description: Initial database name
+  DbAdminUser:
+    Type: String
+    Default: rsadmin
+    AllowedPattern: '^[a-zA-Z][a-zA-Z0-9_]{0,127}$'
+    Description: Master database user name
+  IamRoleName:
+    Type: String
+    Default: LabRole
+    AllowedPattern: '^[a-zA-Z0-9+=,.@_-]{1,64}$'
+    Description: Pre-created IAM role name to attach to the cluster (use LabRole)
+  NodeType:
+    Type: String
+    Default: ra3.large
+    AllowedValues:
+      - ra3.large
+    Description: RA3 node size
+
+Resources:
+  DbAdminSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: "CSED516 wk08 — Redshift master user password (JSON key: password)"
+      GenerateSecretString:
+        SecretStringTemplate: !Sub '{"username":"${DbAdminUser}"}'
+        GenerateStringKey: password
+        PasswordLength: 20
+        ExcludeCharacters: "@/\\' \""
+        RequireEachIncludedType: true
+        ExcludePunctuation: false
+        IncludeSpace: false
+      Tags:
+        - Key: RedshiftDataFullAccess
+          Value: "true"
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: csde516-wk08-vpc
+        - Key: csde516:assignment
+          Value: wk08-redshift
+
+  SubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.0.0/20
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: csde516-wk08-subnet-a
+
+  SubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.16.0/20
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: csde516-wk08-subnet-b
+
+  SubnetGroup:
+    Type: AWS::Redshift::ClusterSubnetGroup
+    Properties:
+      Description: CSED516 wk08 - Redshift private subnets
+      SubnetIds:
+        - !Ref SubnetA
+        - !Ref SubnetB
+      Tags:
+        - Key: Name
+          Value: csde516-wk08-rs-subnets
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: CSED516 wk08 - Redshift private SG (no inbound by default)
+      SecurityGroupIngress: []
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: csde516-wk08-rs-sg
+
+  RedshiftCluster:
+    Type: AWS::Redshift::Cluster
+    Properties:
+      ClusterIdentifier: !Ref ClusterIdentifier
+      ClusterType: multi-node
+      NumberOfNodes: 2
+      DBName: !Ref DatabaseName
+      MasterUsername: !Ref DbAdminUser
+      MasterUserPassword: !Sub '{{resolve:secretsmanager:${DbAdminSecret}::password}}'
+      NodeType: !Ref NodeType
+      ClusterSubnetGroupName: !Ref SubnetGroup
+      VpcSecurityGroupIds:
+        - !Ref SecurityGroup
+      PubliclyAccessible: false
+      IamRoles:
+        - !Sub 'arn:aws:iam::${AWS::AccountId}:role/${IamRoleName}'
+      AutomatedSnapshotRetentionPeriod: 1
+      Encrypted: true
+      KmsKeyId: alias/aws/redshift
+      Tags:
+        - Key: Name
+          Value: csde516-wk08-redshift
+
+  SecretTargetAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !Ref DbAdminSecret
+      TargetId: !Ref RedshiftCluster
+      TargetType: AWS::Redshift::Cluster
+
+Outputs:
+  ClusterIdentifierOut:
+    Value: !Ref ClusterIdentifier
+    Description: Redshift cluster identifier
+  DatabaseNameOut:
+    Value: !Ref DatabaseName
+    Description: Database name
+  DbUserOut:
+    Value: !Ref DbAdminUser
+    Description: Admin database user
+  DbSecretArnOut:
+    Value: !Ref DbAdminSecret
+    Description: Secrets Manager ARN containing the admin password
+  ClusterEndpoint:
+    Value: !GetAtt RedshiftCluster.Endpoint.Address
+    Description: Cluster endpoint address
+  SharedBucketName:
+    Value: csed516-shared-resources-au2025-sharedclassbucket-mc0zal7gjcmu
+    Description: Shared S3 bucket containing class08 raw JSON data
+
