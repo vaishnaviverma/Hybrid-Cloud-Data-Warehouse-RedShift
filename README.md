@@ -6,6 +6,8 @@ In modern data architectures, organizations face a critical trade-off between th
 ## Solution Approach
 This project implements a multi-tier storage architecture to balance cost and performance through a step-by-step engineering workflow.
 
+![Solution Workflow](workflow.png)
+
 ### Step 1: External Data Access (Redshift Spectrum)
 Instead of a traditional "load-everything" approach, I first implemented **Redshift Spectrum**. This allowed for querying raw NDJSON files stored in S3 without moving them into the warehouse.
 * **Implementation**: Utilized AWS Glue Data Catalog and External Schemas to map the S3 data.
